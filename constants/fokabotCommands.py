@@ -2,8 +2,6 @@ import json
 import random
 import re
 import threading
-import sys
-import traceback
 
 import requests
 import time
@@ -37,34 +35,14 @@ return the message or **False** if there's no response by the bot
 TODO: Change False to None, because False doesn't make any sense
 """
 def instantRestart(fro, chan, message):
-	glob.streams.broadcast("main", serverPackets.notification("We are restarting Bancho. Be right back!"))
-	systemHelper.scheduleShutdown(0, True, delay=1)
+	glob.streams.broadcast("main", serverPackets.notification("Bancho is restarting, it will be back online momentarily.."))
+	systemHelper.scheduleShutdown(0, True, delay=5)
 	return False
 
 def faq(fro, chan, message):
-	# TODO: Unhardcode this
-	if message[0] == "rules":
-		return "Please make sure to check (Ripple's rules)[http://ripple.moe/?p=23]."
-	elif message[0] == "swearing":
-		return "Please don't abuse swearing"
-	elif message[0] == "spam":
-		return "Please don't spam"
-	elif message[0] == "offend":
-		return "Please don't offend other players"
-	elif message[0] == "github":
-		return "(Ripple's Github page!)[https://github.com/osuripple/ripple]"
-	elif message[0] == "discord":
-		return "(Join Ripple's Discord!)[https://discord.gg/0rJcZruIsA6rXuIx]"
-	elif message[0] == "blog":
-		return "You can find the latest Ripple news on the (blog)[https://ripple.moe/blog/]!"
-	elif message[0] == "changelog":
-		return "Check the (changelog)[https://ripple.moe/index.php?p=17] !"
-	elif message[0] == "status":
-		return "Check the server status (here!)[https://ripple.moe/index.php?p=27]"
-	elif message[0] == "english":
-		return "Please keep this channel in english."
-	else:
-		return False
+	if message[0] in glob.conf.extra["faq"]:
+		return glob.conf.extra["faq"][message[0]]
+	return False
 
 def roll(fro, chan, message):
 	maxPoints = 100
@@ -113,15 +91,15 @@ def moderated(fro, chan, message):
 		glob.channels.channels[chan].moderated = enable
 		return "This channel is {} in moderated mode!".format("now" if enable else "no longer")
 	except exceptions.moderatedPMException:
-		return "You are trying to put a private chat in moderated mode. Are you serious?!? You're fired."
+		return "You cannot put a private chat in moderated mode.. Duh"
 
 def kickAll(fro, chan, message):
 	# Kick everyone but mods/admins
 	toKick = []
 	with glob.tokens:
 		for key, value in glob.tokens.tokens.items():
- 			if not value.admin:
- 				toKick.append(key)		 			
+			if not value.admin:
+				toKick.append(key)
 
 	# Loop though users to kick (we can't change dictionary size while iterating)
 	for i in toKick:
@@ -132,12 +110,12 @@ def kickAll(fro, chan, message):
 
 def kick(fro, chan, message):
 	# Get parameters
-	target = message[0].lower().replace("_", " ")
-	if target == "fokabot":
+	target = message[0].lower()
+	if target == glob.BOT_NAME.lower():
 		return "Nope."
 
 	# Get target token and make sure is connected
-	tokens = glob.tokens.getTokenFromUsername(target, _all=True)
+	tokens = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True, _all=True)
 	if len(tokens) == 0:
 		return "{} is not online".format(target)
 
@@ -151,7 +129,7 @@ def kick(fro, chan, message):
 def fokabotReconnect(fro, chan, message):
 	# Check if fokabot is already connected
 	if glob.tokens.getTokenFromUserID(999) is not None:
-		return "Fokabot is already connected to Bancho"
+		return "{} is already connected to Bancho".format(glob.BOT_NAME)
 
 	# Fokabot is not connected, connect it
 	fokabot.connect()
@@ -160,13 +138,13 @@ def fokabotReconnect(fro, chan, message):
 def silence(fro, chan, message):
 	for i in message:
 		i = i.lower()
-	target = message[0].replace("_", " ")
+	target = message[0]
 	amount = message[1]
 	unit = message[2]
 	reason = ' '.join(message[3:])
 
 	# Get target user ID
-	targetUserID = userUtils.getID(target)
+	targetUserID = userUtils.getIDSafe(target)
 	userID = userUtils.getID(fro)
 
 	# Make sure the user exists
@@ -187,10 +165,10 @@ def silence(fro, chan, message):
 
 	# Max silence time is 7 days
 	if silenceTime > 604800:
-		return "Invalid silence time. Max silence time is 7 days."
+		return "Invalid silence time. The maximum silence time is 7 days."
 
 	# Send silence packet to target if he's connected
-	targetToken = glob.tokens.getTokenFromUsername(target)
+	targetToken = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True)
 	if targetToken is not None:
 		# user online, silence both in db and with packet
 		targetToken.silence(silenceTime, reason, userID)
@@ -206,16 +184,16 @@ def removeSilence(fro, chan, message):
 	# Get parameters
 	for i in message:
 		i = i.lower()
-	target = message[0].replace("_", " ")
+	target = message[0]
 
 	# Make sure the user exists
-	targetUserID = userUtils.getID(target)
+	targetUserID = userUtils.getIDSafe(target)
 	userID = userUtils.getID(fro)
 	if not targetUserID:
 		return "{}: user not found".format(target)
 
 	# Send new silence end packet to user if he's online
-	targetToken = glob.tokens.getTokenFromUsername(target)
+	targetToken = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True)
 	if targetToken is not None:
 		# User online, remove silence both in db and with packet
 		targetToken.silence(0, "", userID)
@@ -229,33 +207,39 @@ def ban(fro, chan, message):
 	# Get parameters
 	for i in message:
 		i = i.lower()
-	target = message[0].replace("_", " ")
+	target = message[0]
+	reason = ' '.join(message[1:])
 
 	# Make sure the user exists
-	targetUserID = userUtils.getID(target)
+	targetUserID = userUtils.getIDSafe(target)
+	username = chat.fixUsernameForBancho(fro)
 	userID = userUtils.getID(fro)
 	if not targetUserID:
 		return "{}: user not found".format(target)
+
+	if len(reason) <= 3:
+		return "Fuck you add a reason, dipshit."
 
 	# Set allowed to 0
 	userUtils.ban(targetUserID)
 
 	# Send ban packet to the user if he's online
-	targetToken = glob.tokens.getTokenFromUsername(target)
+	targetToken = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True)
 	if targetToken is not None:
 		targetToken.enqueue(serverPackets.loginBanned())
 
-	log.rap(userID, "has banned {}".format(target), True)
-	return "RIP {}. You will not be missed.".format(target)
+	log.rap(userID, "has banned {} ({}) for {}".format(target, targetUserID, reason), True)
+	userUtils.appendNotes(targetUserID, "{} banned for: {}".format(username, reason))
+	return "{} has been banned.".format(target)
 
 def unban(fro, chan, message):
 	# Get parameters
 	for i in message:
 		i = i.lower()
-	target = message[0].replace("_", " ")
+	target = message[0]
 
 	# Make sure the user exists
-	targetUserID = userUtils.getID(target)
+	targetUserID = userUtils.getIDSafe(target)
 	userID = userUtils.getID(fro)
 	if not targetUserID:
 		return "{}: user not found".format(target)
@@ -264,39 +248,45 @@ def unban(fro, chan, message):
 	userUtils.unban(targetUserID)
 
 	log.rap(userID, "has unbanned {}".format(target), True)
-	return "Welcome back {}!".format(target)
+	return "{} has been unbanned.".format(target)
 
 def restrict(fro, chan, message):
 	# Get parameters
 	for i in message:
 		i = i.lower()
-	target = message[0].replace("_", " ")
+	target = message[0]
+	reason = ' '.join(message[1:])
 
 	# Make sure the user exists
-	targetUserID = userUtils.getID(target)
+	targetUserID = userUtils.getIDSafe(target)
+	username = chat.fixUsernameForBancho(fro)
 	userID = userUtils.getID(fro)
 	if not targetUserID:
 		return "{}: user not found".format(target)
+
+	if len(reason) <= 3:
+		return "Fuck you add a reason, dipshit."
 
 	# Put this user in restricted mode
 	userUtils.restrict(targetUserID)
 
 	# Send restricted mode packet to this user if he's online
-	targetToken = glob.tokens.getTokenFromUsername(target)
+	targetToken = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True)
 	if targetToken is not None:
 		targetToken.setRestricted()
 
-	log.rap(userID, "has put {} in restricted mode".format(target), True)
-	return "Bye bye {}. See you later, maybe.".format(target)
+	log.rap(userID, "has restricted {} ({}) for: {}".format(target, targetUserID, reason), True)
+	userUtils.appendNotes(targetUserID, "{} restricted for: {}".format(username, reason))
+	return "{} has been restricted.".format(target)
 
 def unrestrict(fro, chan, message):
 	# Get parameters
 	for i in message:
 		i = i.lower()
-	target = message[0].replace("_", " ")
+	target = message[0]
 
 	# Make sure the user exists
-	targetUserID = userUtils.getID(target)
+	targetUserID = userUtils.getIDSafe(target)
 	userID = userUtils.getID(fro)
 	if not targetUserID:
 		return "{}: user not found".format(target)
@@ -305,7 +295,7 @@ def unrestrict(fro, chan, message):
 	userUtils.unrestrict(targetUserID)
 
 	log.rap(userID, "has removed restricted mode from {}".format(target), True)
-	return "Welcome back {}!".format(target)
+	return "{} has been unrestricted.".format(target)
 
 def restartShutdown(restart):
 	"""Restart (if restart = True) or shutdown (if restart = False) pep.py safely"""
@@ -342,9 +332,9 @@ def systemMaintenance(fro, chan, message):
 
 		# Disconnect everyone but mod/admins
 		with glob.tokens:
- 			for _, value in glob.tokens.tokens.items():
- 				if not value.admin:
- 					who.append(value.userID)
+			for _, value in glob.tokens.tokens.items():
+				if not value.admin:
+					who.append(value.userID)
 
 		glob.streams.broadcast("main", serverPackets.notification("Our bancho server is in maintenance mode. Please try to login again later."))
 		glob.tokens.multipleEnqueue(serverPackets.loginError(), who)
@@ -357,6 +347,7 @@ def systemMaintenance(fro, chan, message):
 	# Chat output
 	return msg
 
+
 def systemStatus(fro, chan, message):
 	# Print some server info
 	data = systemHelper.getSystemInfo()
@@ -367,7 +358,11 @@ def systemStatus(fro, chan, message):
 		letsVersion = "\_(xd)_/"
 	else:
 		letsVersion = letsVersion.decode("utf-8")
-	msg = "=== BANCHO STATS ===\n"
+	msg = "pep.py bancho server v{}\n".format(glob.VERSION)
+	msg += "LETS scores server v{}\n".format(letsVersion)
+	msg += "made by the Ripple & Akatsuki teams\n"
+	msg += "\n"
+	msg += "=== BANCHO STATS ===\n"
 	msg += "Connected users: {}\n".format(data["connectedUsers"])
 	msg += "Multiplayer matches: {}\n".format(data["matches"])
 	msg += "Uptime: {}\n".format(data["uptime"])
@@ -393,14 +388,9 @@ def getPPMessage(userID, just_data = False):
 		currentAcc = token.tillerino[2]
 
 		# Send request to LETS api
-		if(currentAcc != -1):
-			resp = requests.get("http://127.0.0.1:5002/api/v1/pp?b={}&m={}&a={}".format(currentMap, currentMods, currentAcc), timeout=10).text
-		else:
-			resp = requests.get("http://127.0.0.1:5002/api/v1/pp?b={}&m={}".format(currentMap, currentMods), timeout=10).text
+		resp = requests.get("http://127.0.0.1:5002/api/v1/pp?b={}&m={}".format(currentMap, currentMods), timeout=10).text
 		data = json.loads(resp)
-		log.info(data)
-		log.info("http://127.0.0.1:5002/api/v1/pp?b={}&m={}".format(currentMap, currentMods))
-		beatmapLink = "[http://osu.ppy.sh/b/{1} {0}]".format(data["song_name"], token.tillerino[0])
+
 		# Make sure status is in response data
 		if "status" not in data:
 			raise exceptions.apiException
@@ -414,29 +404,31 @@ def getPPMessage(userID, just_data = False):
 
 		if just_data:
 			return data
+
 		# Return response in chat
 		# Song name and mods
-		msg = "{song}{plus}{mods}  ".format(song = beatmapLink, plus=" " if currentMods > 0 else "", mods=generalUtils.readableMods(currentMods))
+		msg = "{song}{plus}{mods}  ".format(song=data["song_name"], plus="+" if currentMods > 0 else "", mods=generalUtils.readableMods(currentMods))
 
 		# PP values
 		if currentAcc == -1:
 			msg += "95%: {pp95}pp | 98%: {pp98}pp | 99% {pp99}pp | 100%: {pp100}pp".format(pp100=data["pp"][0], pp99=data["pp"][1], pp98=data["pp"][2], pp95=data["pp"][3])
 		else:
 			msg += "{acc:.2f}%: {pp}pp".format(acc=token.tillerino[2], pp=data["pp"][0])
+		
+		originalAR = data["ar"]
+		# calc new AR if HR/EZ is on
+		if (currentMods & mods.EASY) > 0:
+			data["ar"] = max(0, data["ar"] / 2)
+		if (currentMods & mods.HARDROCK) > 0:
+			data["ar"] = min(10, data["ar"] * 1.4)
+		
+		arstr = " ({})".format(originalAR) if originalAR != data["ar"] else ""
+		
+		# Beatmap info
+		msg += " | {bpm} BPM | AR {ar}{arstr} | {stars:.2f} stars".format(bpm=data["bpm"], stars=data["stars"], ar=data["ar"], arstr=arstr)
 
-		sec = data["length"]
-		# Beatmap info	
-		h = ((sec//3600))%24
-		m = (sec//60)%60
-		s = sec%60
-		if(h>0):
-			songlength = '{0}:{1:=02}:{2:=02}'.format(h, m, s)
-		else:
-			songlength = '{1:=02}:{2:=02}'.format(h, m, s)  
-		msg += " | {length} {stars:.2f} \u2605  {bpm} \u266b AR{ar} OD{od}".format(length=songlength,bpm=data["bpm"], stars=data["stars"], ar=data["ar"], od=data["od"])
-		token.tillerino[2] = -1
 		# Return final message
-		return msg.encode("utf-8").decode("latin-1")
+		return msg
 	except requests.exceptions.RequestException:
 		# RequestException
 		return "API Timeout. Please try again in a few seconds."
@@ -557,42 +549,6 @@ def tillerinoMods(fro, chan, message):
 		return False
 
 
-def getTillerinoRecommendation(fro, chan, message):
-	try:
-		# Run the command in PM only
-		if chan.startswith("#"):
-			return False
-
-		token = glob.tokens.getTokenFromUsername(fro)
-		userID = token.userID
-		
-		l = glob.db.fetch("SELECT * from tillerino_maplists WHERE user = {}".format(str(userID)))
-		i = glob.db.fetch("SELECT * from tillerino_offsets WHERE user = {}".format(str(userID)))
-		if i is not None:
-			i = i['offset']
-			maplist = l['maplist'].split(',')
-			if(i >= len(maplist)):
-				return "I have nothing to recommend you"
-			data = None 
-			while (data is None):
-				map = maplist[i]
-				i += 1
-				data = glob.db.fetch("SELECT beatmaps.beatmap_id as bid, beatmaps.song_name as sn from beatmaps WHERE beatmap_md5 = \'{}\'".format(map))
-					
-			modsEnum = 0
-			if token is not None:
-				token.tillerino = [int(data["bid"]), 0 , -1.0]
-
-			glob.db.execute("UPDATE tillerino_offsets  SET offset = {} WHERE user = {}".format(str(i),str(userID)))
-
-
-
-	        # Return tillerino message
-			return getPPMessage(userID)
-	except Exception as a:
-		log.error("Unknown error in {}!\n```{}\n{}```".format("fokabotCommands", sys.exc_info(), traceback.format_exc()))
-		return False
-		
 def tillerinoAcc(fro, chan, message):
 	try:
 		# Run the command in PM only
@@ -622,58 +578,29 @@ def tillerinoAcc(fro, chan, message):
 	except:
 		return False
 
-
-def requestRank(fro, chan, message):
-		# Run the command in PM only
-	if chan.startswith("#"):
-		return False	
-	token = glob.tokens.getTokenFromUsername(fro)
-	if token is None:
-		return "error"
-	userID = token.userID
-	if token.tillerino[0] == 0:
-		return "Please give me a beatmap first with /np command."
-	beatmapID = token.tillerino[0]
-	timestamp = int(time.time())
-	myRequests = glob.db.fetch("SELECT COUNT(*) AS count FROM rank_requests WHERE time > %s AND userid = %s LIMIT 5",[timestamp-(24*3600),userID ])["count"]
-	totalRequests = glob.db.fetch("SELECT COUNT(*) AS count FROM rank_requests WHERE time > %s LIMIT 40",[timestamp-(24*3600)])["count"]
-	if(totalRequests >= 40):
-		return "Maximum 40 requests per day by all players"
-	if(myRequests >= 5):
-		return "You can have only 5 requests per day"
-
-	ranked = glob.db.fetch("SELECT id FROM beatmaps WHERE beatmap_id = %s AND ranked >= 2 LIMIT 1",[beatmapID])
-	if ranked is not None:
-		return "That beatmap is already ranked."
-	requested = glob.db.fetch("SELECT * FROM rank_requests WHERE bid = %s AND type = 'b' AND time > %s",[beatmapID,timestamp-(96*3600)])
-	if requested is not None:
-		return "That beatmap was already requested."
-	glob.db.execute("INSERT INTO rank_requests (id, userid, bid, type, time, blacklisted) VALUES (NULL, %s, %s, 'b', %s, 0)",[userID,beatmapID,timestamp])
-	return "Your beatmap ranking request has been submitted successfully! Our BATs will check your request and eventually rank it."
-
 def tillerinoLast(fro, chan, message):
 	try:
 		# Run the command in PM only
-
+		if chan.startswith("#"):
+			return False
 		data = glob.db.fetch("""SELECT beatmaps.song_name as sn, scores.*,
-            beatmaps.beatmap_id as bid, beatmaps.difficulty_std, beatmaps.difficulty_taiko, beatmaps.difficulty_ctb, beatmaps.difficulty_mania, beatmaps.max_combo as fc
-        FROM (SELECT * from scores WHERE scores.time > %s AND scores.completed > 0) AS scores
-        LEFT JOIN beatmaps ON beatmaps.beatmap_md5=scores.beatmap_md5
-        LEFT JOIN users ON users.id = scores.userid
-        WHERE users.username = %s
-        ORDER BY scores.id DESC
-        LIMIT 1""", [time.time() - 86400,fro])
+			beatmaps.beatmap_id as bid, beatmaps.difficulty_std, beatmaps.difficulty_taiko, beatmaps.difficulty_ctb, beatmaps.difficulty_mania, beatmaps.max_combo as fc
+		FROM scores
+		LEFT JOIN beatmaps ON beatmaps.beatmap_md5=scores.beatmap_md5
+		LEFT JOIN users ON users.id = scores.userid
+		WHERE users.username = %s
+		ORDER BY scores.time DESC
+		LIMIT 1""", [fro])
 		if data is None:
 			return False
 
 		diffString = "difficulty_{}".format(gameModes.getGameModeForDB(data["play_mode"]))
-		rank = data["rank"]
+		rank = generalUtils.getRank(data["play_mode"], data["mods"], data["accuracy"],
+									data["300_count"], data["100_count"], data["50_count"], data["misses_count"])
 
-		ifPlayer = "{0} | ".format(fro) if chan != "FokaBot" else ""
-		ifFc = ""
-		if data["play_mode"] == gameModes.STD:
-			ifFc = " (FC)" if data["max_combo"] == data["fc"] else " {0}x/{1}x".format(data["max_combo"], data["fc"])
-		beatmapLink = "[http://osu.ppy.sh/b/{1} {0}]".format(data["sn"].encode("utf-8").decode("latin-1"), data["bid"])
+		ifPlayer = "{0} | ".format(fro) if chan != glob.BOT_NAME else ""
+		ifFc = " (FC)" if data["max_combo"] == data["fc"] else " {0}x/{1}x".format(data["max_combo"], data["fc"])
+		beatmapLink = "[http://osu.ppy.sh/b/{1} {0}]".format(data["sn"], data["bid"])
 
 		hasPP = data["play_mode"] != gameModes.CTB
 
@@ -681,18 +608,24 @@ def tillerinoLast(fro, chan, message):
 		msg += beatmapLink
 		if data["play_mode"] != gameModes.STD:
 			msg += " <{0}>".format(gameModes.getGameModeForPrinting(data["play_mode"]))
-		if data["mods"] and data["play_mode"] != gameModes.MANIA:
-			if(data["mods"] & 536870912):
-				msg += ' ~ScoreV2~'
-			if(data["mods"] > 0):
-				msg += ' +' + generalUtils.readableMods(data["mods"])
+
+		if data["mods"]:
+			msg += ' +' + generalUtils.readableMods(data["mods"])
+
+		if not hasPP:
+			msg += " | {0:,}".format(data["score"])
+			msg += ifFc
+			msg += " | {0:.2f}%, {1}".format(data["accuracy"], rank.upper())
+			msg += " {{ {0} / {1} / {2} / {3} }}".format(data["300_count"], data["100_count"], data["50_count"], data["misses_count"])
+			msg += " | {0:.2f} stars".format(data[diffString])
+			return msg
 
 		msg += " ({0:.2f}%, {1})".format(data["accuracy"], rank.upper())
 		msg += ifFc
 		msg += " | {0:.2f}pp".format(data["pp"])
 
 		stars = data[diffString]
-		if data["mods"] and hasPP:
+		if data["mods"]:
 			token = glob.tokens.getTokenFromUsername(fro)
 			if token is None:
 				return False
@@ -709,10 +642,6 @@ def tillerinoLast(fro, chan, message):
 	except Exception as a:
 		log.error(a)
 		return False
-
-def mm00(fro, chan, message):
-	random.seed()
-	return random.choice(["meme", "300bpm"])
 
 def pp(fro, chan, message):
 	if chan.startswith("#"):
@@ -737,6 +666,8 @@ def pp(fro, chan, message):
 		return False
 	if gameMode is None:
 		gameMode = token.gameMode
+	if gameMode == gameModes.TAIKO or gameMode == gameModes.CTB:
+		return "PP for your current game mode is not supported yet."
 	pp = userUtils.getPP(token.userID, gameMode)
 	return "You have {:,} pp".format(pp)
 
@@ -764,24 +695,29 @@ def updateBeatmap(fro, chan, message):
 	except:
 		return False
 
+
+	# cmyui section that cmyui coded and cmyui did it no matter what any other retard says >:((((((((((
+
 def report(fro, chan, message):
 	msg = ""
 	try:
+		for i in message:
+			i = i.lower()
+		target = message[0]
+		reason = ' '.join(message[1:])
 		# TODO: Rate limit
 		# Regex on message
-		reportRegex = re.compile("^(.+) \((.+)\)\:(?: )?(.+)?$")
-		result = reportRegex.search(" ".join(message))
 
 		# Make sure the message matches the regex
-		if result is None:
+		if reason is None:
 			raise exceptions.invalidArgumentsException()
 
 		# Get username, report reason and report info
-		target, reason, additionalInfo = result.groups()
 		target = chat.fixUsernameForBancho(target)
+		name = chat.fixUsernameForBancho(fro)
 
 		# Make sure the target is not foka
-		if target.lower() == "fokabot":
+		if target.lower() == glob.BOT_NAME.lower():
 			raise exceptions.invalidUserException()
 
 		# Make sure the user exists
@@ -789,32 +725,26 @@ def report(fro, chan, message):
 		if targetID == 0:
 			raise exceptions.userNotFoundException()
 
-		# Make sure that the user has specified additional info if report reason is 'Other'
-		if reason.lower() == "other" and additionalInfo is None:
-			raise exceptions.missingReportInfoException()
-
 		# Get the token if possible
 		chatlog = ""
-		token = glob.tokens.getTokenFromUsername(target)
+		token = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True)
 		if token is not None:
 			chatlog = token.getMessagesBufferString()
 
 		# Everything is fine, submit report
-		glob.db.execute("INSERT INTO reports (id, from_uid, to_uid, reason, chatlog, time) VALUES (NULL, %s, %s, %s, %s, %s)", [userUtils.getID(fro), targetID, "{reason} - ingame {info}".format(reason=reason, info="({})".format(additionalInfo) if additionalInfo is not None else ""), chatlog, int(time.time())])
-		msg = "You've reported {target} for {reason}{info}. A Community Manager will check your report as soon as possible. Every !report message you may see in chat wasn't sent to anyone, so nobody in chat, but admins, know about your report. Thank you for reporting!".format(target=target, reason=reason, info="" if additionalInfo is None else " (" + additionalInfo.encode("utf-8").decode("latin-1")  + ")")
-		adminMsg = "{user} has reported {target} for {reason} ({info})".format(user=fro, target=target, reason=reason, info=additionalInfo)
+		glob.db.execute("INSERT INTO reports (id, from_username, name, from_uid, to_uid, content, chatlog, open_time) VALUES (NULL, %s, %s, %s, %s, %s, %s, %s)", [target, name, userUtils.getID(fro), targetID, reason, chatlog, int(time.time())])
+		msg = "You've reported {target} for {reason}. Thank you for reporting! Your report will be checked by the admins of Akatsuki soon!".format(target=target, reason=reason)
+		adminMsg = "{user} has reported {target} for {reason}".format(user=fro, target=target, reason=reason)
 
 		# Log report in #admin and on discord
-		chat.sendMessage("FokaBot", "#admin", adminMsg)
+		chat.sendMessage(glob.BOT_NAME, "#admin", adminMsg)
 		log.warning(adminMsg, discord="cm")
 	except exceptions.invalidUserException:
-		msg = "Hello, FokaBot here! You can't report me. I won't forget what you've tried to do. Watch out."
+		msg = "Hello, {} here! You can't report me. I won't forget what you've tried to do. Watch out.".format(glob.BOT_NAME)
 	except exceptions.invalidArgumentsException:
-		msg = "Invalid report command syntax. To report an user, click on it and select 'Report user'."
+		msg = "Please specify a reason for the report."
 	except exceptions.userNotFoundException:
-		msg = "The user you've tried to report doesn't exist."
-	except exceptions.missingReportInfoException:
-		msg = "Please specify the reason of your report."
+		msg = "The user you've tried to report doesn't exist. If their username contains a space, use an underscore instead."
 	except:
 		raise
 	finally:
@@ -822,21 +752,252 @@ def report(fro, chan, message):
 			token = glob.tokens.getTokenFromUsername(fro)
 			if token is not None:
 				if token.irc:
-					chat.sendMessage("FokaBot", fro, msg)
+					chat.sendMessage(glob.BOT_NAME, fro, msg)
 				else:
 					token.enqueue(serverPackets.notification(msg))
 	return False
 
-def rtx(fro, chan, message):
+def changeUsername(fro, chan, message): # Change a users username, ingame.
+	messages = [m.lower() for m in message]
 	target = message[0]
-	message = " ".join(message[1:])
+	newUsername = message[1]
+
+	if target == glob.BOT_NAME.lower():
+		return "Nope."
+
+	# Grab userID & Token
+	userID = userUtils.getIDSafe(target)
+	tokens = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True, _all=True)
+	idkWhyICantUseThePreviousOne = glob.tokens.getTokenFromUsername(userUtils.safeUsername(target), safe=True)
+
+	# Change their username
+	userUtils.changeUsername(userID, target, newUsername)
+
+	# Ensure they are online (since it's only nescessary to kick/alert them if they're online), then do so if they are.
+	if len(tokens) == 0:
+		return "{} is not online".format(target)
+	idkWhyICantUseThePreviousOne.enqueue(serverPackets.notification("Your name has been changed to {}. Please relogin using that name.".format(newUsername)))
+
+	# Kick users
+	for i in tokens:
+		i.kick()
+
+	log.rap(userID, "has changed {}'s username to {}.".format(target, newUsername))
+	return "Name successfully changed. It might take a while to change the username if the user is online on Bancho."
+
+def editMap(fro, chan, message): # Edit maps ranking status ingame.
+	messages = [m.lower() for m in message]
+	rankType = message[0]
+	mapType = message[1]
+	mapID = message[2]
+
+	# Get persons username & ID
+	name = chat.fixUsernameForBancho(fro)
+	userID = userUtils.getID(fro)
+	userName = userUtils.getUsername(userID)
+
+	# Figure out what to do
+	if rankType == 'rank':
+		rankTypeID = 2
+		freezeStatus = 1
+	elif rankType == 'love':
+		rankTypeID = 5
+		freezeStatus = 1
+	elif rankType == 'unrank':
+		rankTypeID = 0
+		freezeStatus = 0
+
+	# Grab beatmapData from db
+	beatmapData = glob.db.fetch("SELECT * FROM beatmaps WHERE beatmap_id = {} LIMIT 1".format(mapID))
+
+	if mapType == 'set':
+		glob.db.execute("UPDATE beatmaps SET ranked = {}, ranked_status_freezed = {}, rankedhere = {}, rankedby = {} WHERE beatmapset_id = {} LIMIT 100".format(rankTypeID, freezeStatus, rankTypeID, userID, beatmapData["beatmapset_id"]))
+		if freezeStatus == 1:
+				glob.db.execute("""UPDATE scores s JOIN (SELECT userid, MAX(score) maxscore FROM scores JOIN beatmaps ON scores.beatmap_md5 = beatmaps.beatmap_md5 WHERE beatmaps.beatmap_md5 = (SELECT beatmap_md5 FROM beatmaps
+					WHERE beatmapset_id = {} LIMIT 1) GROUP BY userid) s2 ON s.score = s2.maxscore AND s.userid = s2.userid SET completed = 3""".format(beatmapData["beatmapset_id"]))
+	elif mapType == 'map':
+		glob.db.execute("UPDATE beatmaps SET ranked = {}, ranked_status_freezed = {}, rankedhere = {}, rankedby = {} WHERE beatmap_id = {} LIMIT 1".format(rankTypeID, freezeStatus, rankTypeID, userID, mapID ))
+		if freezeStatus == 1:
+				glob.db.execute("""UPDATE scores s JOIN (SELECT userid, MAX(score) maxscore FROM scores JOIN beatmaps ON scores.beatmap_md5 = beatmaps.beatmap_md5 WHERE beatmaps.beatmap_md5 = (SELECT beatmap_md5 FROM beatmaps
+					WHERE beatmap_id = {} LIMIT 1) GROUP BY userid) s2 ON s.score = s2.maxscore AND s.userid = s2.userid SET completed = 3""".format(beatmapData["beatmap_id"]))
+	else:
+		return "Please specify whether it is a set/map. eg: '!map unrank/rank/love set/map 123456'"
+
+	# Announce / Log to AP logs when ranked status is changed
+	if rankType == "love":
+		log.rap(userID, "has {}d beatmap ({}): {} ({}).".format(rankType, mapType, beatmapData["song_name"], mapID), True)
+		if mapType == 'set':
+			msg = "{} has loved beatmap set: [https://osu.ppy.sh/s/{} {}]".format(name, beatmapData["beatmapset_id"], beatmapData["song_name"])
+		else:
+			msg = "{} has loved beatmap: [https://osu.ppy.sh/s/{} {}]".format(name, mapID, beatmapData["song_name"])
+	else:
+		log.rap(userID, "has {}ed beatmap ({}): {} ({}).".format(rankType, mapType, beatmapData["song_name"], mapID), True)
+		if mapType == 'set':
+			msg = "{} has {}ed beatmap set: [https://osu.ppy.sh/s/{} {}]".format(name, rankType, beatmapData["beatmapset_id"], beatmapData["song_name"])
+		else:
+			msg = "{} has {}ed beatmap: [https://osu.ppy.sh/s/{} {}]".format(name, rankType, mapID, beatmapData["song_name"])
+	chat.sendMessage(glob.BOT_NAME, "#nowranked", msg)
+	return msg
+
+def runSQL(fro, chan, message): # Obviously not the safest command.. Run SQL queries ingame!
+	messages = [m.lower() for m in message]
+	command = ' '.join(message[0:])
+
+	userID = userUtils.getID(fro)
+
+	if userID == 1001: # Just cmyui owo
+		if len(command) < 10: # Catch this so it doesnt say it failed when it kinda didnt even though it did what the fuck am i typing anymore
+			return "Query length too short.. You're probably doing something wrong."
+		try:
+			glob.db.execute(command)
+		except:
+			return "Could not successfully execute query"
+	else:
+		return "You lack sufficient permissions to execute this query"
+	return "Query executed successfully"
+
+def postAnnouncement(fro, chan, message): # Post to #announce ingame
+	messgaes = [m.lower() for m in message]
+	announcement = ' '.join(message[0:])
+	chat.sendMessage(glob.BOT_NAME, "#announce", announcement)
+	return "Announcement successfully sent."
+
+def promoteUser(fro, chan, message): # Set a users privileges ingame
+	messages = [m.lower() for m in message]
+	target = message[0]
+	privilege = message[1]
+
+	targetUserID = userUtils.getIDSafe(target)
+	userID = userUtils.getID(fro)
+
+	if not targetUserID:
+		return "{}: user not found".format(target)
+
+	if privilege == 'user':
+		priv = 3
+	elif privilege == 'bat':
+		priv = 267
+	elif privilege == 'mod':
+		priv = 786763
+	elif privilege == 'tournamentstaff':
+		priv = 2097159
+	elif privilege == 'admin':
+		priv = 3047935
+	elif privilege == 'developer':
+		priv = 3145727
+	elif privilege == 'owner':
+		priv = 7340031
+	else:
+		return "Invalid rankname (bat/mod/tournamentstaff/admin/developer/owner)"
+
+	try:
+		glob.db.execute("UPDATE users SET privileges = %s WHERE id = %s LIMIT 1", [priv, targetUserID])
+	except:
+		return "An unknown error has occured while trying to set role."
+
+	# Log message
+	log.rap(userID, "set {} to {}.".format(target, privilege), True)
+	msg = "{}'s rank has been set to: {}".format(target, privilege)
+	chat.sendMessage(glob.BOT_NAME, "#announce", msg)
+	return msg
+
+def rtxMurder(fro, chan, message):
+	target = message[0]
+	number = message[1]
+	message = " ".join(message[2:])
+
+	userID = userUtils.getID(fro)
+
+	if userID != 1001: # Just cmyui owo
+		return "Sorry but only cmyui himself may use this command.."
+
+	if not number.isdigit():
+		return "Please specify a count, I.E !imsosorry 100 cmyui xd"
+
 	targetUserID = userUtils.getIDSafe(target)
 	if not targetUserID:
 		return "{}: user not found".format(target)
 	userToken = glob.tokens.getTokenFromUserID(targetUserID, ignoreIRC=True, _all=False)
-	userToken.enqueue(serverPackets.rtx(message.encode("utf-8").decode("latin-1")))
-	return ":ok_hand:"
+	base = 1
+	while base < number:
+		base = base + 1
+		userToken.enqueue(serverPackets.rtx(message))
+	return "their poor souls will remember this for eternity.."
 
+def recommendMap(fro, chan, message):
+	messages = [m.lower() for m in message]
+	try:
+		diffmode = message[0]
+		if chan.startswith("#"):
+			return False
+		# Probably the hardest thing I've ever attempted to code (made by cmyui winky face emoji :cowboy:)
+		# Currently only works on nomod because idk how to code
+		userID = userUtils.getIDSafe(fro)
+
+		# Specify gamemode. recommend PP to the User
+		if not diffmode.isdigit():
+			if diffmode == "std":
+				modeName = "std"
+				modeID = 0
+			elif diffmode == "taiko":
+				modeName = "taiko"
+				modeID = 1
+			elif diffmode == "ctb":
+				modeName = "ctb"
+				modeID = 2
+			elif diffmode == "mania":
+				modeName = "mania"
+				modeID = 3
+			else:
+				return "Please enter a valid gamemode."
+
+			# Calculate what sort of PP amounts we should be recommending based on the average of their top 10 plays
+			userPPData = glob.db.fetch("SELECT AVG(pp) FROM (SELECT pp FROM scores WHERE userid = {} AND play_mode = {} ORDER BY pp DESC LIMIT 10) AS topplays".format(userID, modeID))
+
+			"""
+			if not pp in userPPData:
+				return "You do not have enough scores in this gamemode to have any recommendations."
+			"""
+
+			#Determine what amount of PP we should recommend them
+			rawrecommendedPP = userPPData.values()
+			recommendedPP = 0
+			for val in rawrecommendedPP:
+				recommendedPP += val
+
+			# Determine the amount of variance
+			ppVariance = recommendedPP / 15
+			ppBelow = recommendedPP - ppVariance
+			ppAbove = recommendedPP + ppVariance
+
+			recommendedMaps = glob.db.fetch("SELECT beatmap_id, song_name, ar, od, bpm, difficulty_{}, max_combo, pp_100, pp_99, pp_98, pp_95 FROM beatmaps WHERE ranked = 2 AND ((pp_95 > {} AND pp_95 < {}) OR (pp_98 > {} AND pp_98 < {}) OR (pp_99 > {} AND pp_99 < {}) OR (pp_100 > {} AND pp_100 < {})) AND mode = {} ORDER BY RAND() LIMIT 1".format(modeName, ppBelow, ppAbove, ppBelow, ppAbove, ppBelow, ppAbove, ppBelow, ppAbove, modeID))
+			return "{} | [https://osu.ppy.sh/b/{} {}]: OD{} | AR{} | {}BPM | {}* | Max Combo: {} | Current recommendations: {} - {}pp | 95%: {}pp | 98%: {}pp | 99%: {}pp | 100%: {}pp. Good luck owo!".format(modeName, recommendedMaps["beatmap_id"], recommendedMaps["song_name"], recommendedMaps["od"], recommendedMaps["ar"], recommendedMaps["bpm"], recommendedMaps["difficulty_{}".format(modeName)], recommendedMaps["max_combo"], ppBelow, ppAbove, recommendedMaps["pp_95"], recommendedMaps["pp_98"], recommendedMaps["pp_99"], recommendedMaps["pp_100"])
+
+
+		else: # Do not specify gamemode. Do not recommend PP as they are picking a star rating
+			"""
+			if int(diffmode) > 10:
+				return "Maps over 10* will not be calculated."
+			"""
+			findMode = glob.db.fetch("SELECT favourite_mode FROM users_stats where id = {}".format(userID))
+			if findMode["favourite_mode"] == 0:
+				modeName = "std"
+				modeID = 0
+			elif findMode["favourite_mode"] == 1:
+				modeName = "taiko"
+				modeID = 1
+			elif findMode["favourite_mode"] == 2:
+				modeName = "ctb"
+				modeID = 2
+			elif findMode["favourite_mode"] == 3:
+				modeName = "mania"
+				modeID = 3
+
+			diffmodeplus = int(diffmode) + 1
+			recommendedMaps = glob.db.fetch("SELECT beatmap_id, song_name, ar, od, bpm, difficulty_{}, max_combo, pp_100, pp_99, pp_98, pp_95 FROM beatmaps WHERE ranked = 2 AND difficulty_{} > {} AND difficulty_{} < {} AND mode = {} ORDER BY RAND() LIMIT 1".format(modeName, modeName, diffmode, modeName, diffmodeplus, modeID))
+			return "{} | [https://osu.ppy.sh/b/{} {}]: OD{} | AR{} | {}BPM | {}* | Max Combo: {} | 95%: {}pp | 98%: {}pp | 99%: {}pp | 100%: {}pp. Good luck owo!".format(modeName, recommendedMaps["beatmap_id"], recommendedMaps["song_name"], recommendedMaps["od"], recommendedMaps["ar"], recommendedMaps["bpm"], recommendedMaps["difficulty_{}".format(modeName)], recommendedMaps["max_combo"], recommendedMaps["pp_95"], recommendedMaps["pp_98"], recommendedMaps["pp_99"], recommendedMaps["pp_100"])		
+	except:
+		return "Please use the correct syntax: !r <mode or * rating (will predict your main mode)>"
 
 def multiplayer(fro, chan, message):
 	def getMatchIDFromChannel(chan):
@@ -865,10 +1026,25 @@ def multiplayer(fro, chan, message):
 		userToken.joinMatch(matchID)
 		return "Attempting to join match #{}!".format(matchID)
 
+	def mpForce():
+		username = message[1]
+		matchID = int(message[2])
+
+		userToken = glob.tokens.getTokenFromUsername(username, ignoreIRC=True)
+		if userToken is None:
+			return "No such user"
+
+		try:
+			userToken.joinMatch(matchID)
+		except:
+			return "Could not find multiplayer match {}".format(matchID)
+
+		return "Attempting to force user {} into match #{}!".format(username, matchID)
+
 	def mpClose():
 		matchID = getMatchIDFromChannel(chan)
 		glob.matches.disposeMatch(matchID)
-		return "Multiplayer match #{} disposed successfully".format(myToken.matchID)
+		return "Multiplayer match #{} disposed successfully".format(matchID)
 
 	def mpLock():
 		matchID = getMatchIDFromChannel(chan)
@@ -925,10 +1101,10 @@ def multiplayer(fro, chan, message):
 			matchID = getMatchIDFromChannel(chan)
 			success = glob.matches.matches[matchID].start()
 			if not success:
-				chat.sendMessage("FokaBot", chan, "Couldn't start match. Make sure there are enough players and "
+				chat.sendMessage(glob.BOT_NAME, chan, "Couldn't start match. Make sure there are enough players and "
 												  "teams are valid. The match has been unlocked.")
 			else:
-				chat.sendMessage("FokaBot", chan, "Have fun!")
+				chat.sendMessage(glob.BOT_NAME, chan, "Have fun!")
 
 
 		def _decreaseTimer(t):
@@ -936,7 +1112,7 @@ def multiplayer(fro, chan, message):
 				_start()
 			else:
 				if t % 10 == 0 or t <= 5:
-					chat.sendMessage("FokaBot", chan, "Match starts in {} seconds.".format(t))
+					chat.sendMessage(glob.BOT_NAME, chan, "Match starts in {} seconds.".format(t))
 				threading.Timer(1.00, _decreaseTimer, [t - 1]).start()
 
 		if len(message) < 2 or not message[1].isdigit():
@@ -981,8 +1157,8 @@ def multiplayer(fro, chan, message):
 			raise exceptions.invalidUserException("That user is not connected to bancho right now.")
 		_match = glob.matches.matches[getMatchIDFromChannel(chan)]
 		_match.invite(999, userID)
-		token.enqueue(serverPackets.notification("Please accept the invite you've just received from FokaBot to "
-												 "enter your tourney match."))
+		token.enqueue(serverPackets.notification("Please accept the invite you've just received from {} to "
+												 "enter your tourney match.".format(glob.BOT_NAME)))
 		return "An invite to this match has been sent to {}".format(username)
 
 	def mpMap():
@@ -1141,6 +1317,7 @@ def multiplayer(fro, chan, message):
 			"make": mpMake,
 			"close": mpClose,
 			"join": mpJoin,
+			"force": mpForce,
 			"lock": mpLock,
 			"unlock": mpUnlock,
 			"size": mpSize,
@@ -1191,6 +1368,16 @@ def switchServer(fro, chan, message):
 	# userToken.kick()
 	return "{} has been connected to {}".format(target, newServer)
 
+def rtx(fro, chan, message):
+	target = message[0]
+	message = " ".join(message[1:])
+	targetUserID = userUtils.getIDSafe(target)
+	if not targetUserID:
+		return "{}: user not found".format(target)
+	userToken = glob.tokens.getTokenFromUserID(targetUserID, ignoreIRC=True, _all=False)
+	userToken.enqueue(serverPackets.rtx(message))
+	return ":ok_hand:"
+
 """
 Commands list
 
@@ -1213,15 +1400,27 @@ commands = [
 		"callback": report
 	}, {
 		"trigger": "!help",
-		"response": "Click (here)[https://ripple.moe/index.php?p=16&id=4] for FokaBot's full command list"
-	}, #{
-		#"trigger": "!ask",
-		#"syntax": "<question>",
-		#"callback": ask
-	#}, {
+		"response": "Click (here)[https://osu.akatsuki.pw/doc/3] for the full command list"
+	}, {
+		"trigger": "!r",
+		"callback": recommendMap
+	},
 	{
-		"trigger": "!mm00",
-		"callback": mm00
+		"trigger": "!map",
+		"syntax": "<rank/unrank/love> <set/map> <ID>",
+		"privileges": privileges.ADMIN_MANAGE_BEATMAPS,
+		"callback": editMap
+	},
+	{
+		"trigger": "!priv",
+		"syntax": "<userID> <rank>",
+		"privileges": privileges.ADMIN_MANAGE_USERS,
+		"callback": promoteUser
+	}, {
+		"trigger": "!announce",
+		"syntax": "<announcement>",
+		"privileges": privileges.ADMIN_SEND_ALERTS,
+		"callback": postAnnouncement
 	}, {
 		"trigger": "!alert",
 		"syntax": "<message>",
@@ -1241,12 +1440,16 @@ commands = [
 		"privileges": privileges.ADMIN_MANAGE_SERVERS,
 		"callback": kickAll
 	}, {
+		"trigger": "!query",
+		"privileges": privileges.ADMIN_MANAGE_SERVERS,
+		"callback": runSQL
+	}, {
 		"trigger": "!kick",
 		"syntax": "<target>",
 		"privileges": privileges.ADMIN_KICK_USERS,
 		"callback": kick
 	}, {
-		"trigger": "!fokabot reconnect",
+		"trigger": "!bot reconnect",
 		"privileges": privileges.ADMIN_MANAGE_SERVERS,
 		"callback": fokabotReconnect
 	}, {
@@ -1255,7 +1458,7 @@ commands = [
 		"privileges": privileges.ADMIN_SILENCE_USERS,
 		"callback": silence
 	}, {
-		"trigger": "!removesilence",
+		"trigger": "!unsilence",
 		"syntax": "<target>",
 		"privileges": privileges.ADMIN_SILENCE_USERS,
 		"callback": removeSilence
@@ -1308,9 +1511,6 @@ commands = [
 	}, {
 		"trigger": "\x01ACTION is watching",
 		"callback": tillerinoNp
-	},{
-		"trigger":"!request",
-		"callback":requestRank
 	}, {
 		"trigger": "!with",
 		"callback": tillerinoMods,
@@ -1326,14 +1526,9 @@ commands = [
 		"trigger": "!pp",
 		"callback": pp
 	}, {
-		"trigger": "!acc",
-		"callback": tillerinoAcc,
-		"syntax": "<accuracy>"
+		"trigger": "!update",
+		"callback": updateBeatmap
 	}, {
-		"trigger": "!r",
-		"callback": getTillerinoRecommendation
-	}
-	, {
 		"trigger": "!mp",
 		"privileges": privileges.USER_TOURNAMENT_STAFF,
 		"syntax": "<subcommand>",
@@ -1345,9 +1540,24 @@ commands = [
 		"callback": switchServer
 	}, {
 		"trigger": "!rtx",
-		"privileges": privileges.ADMIN_KICK_USERS,
+		"privileges": privileges.ADMIN_MANAGE_USERS,
 		"syntax": "<username> <message>",
 		"callback": rtx
+	}, {
+		"trigger": "!imsosorry",
+		"privileges": privileges.ADMIN_MANAGE_SERVERS,
+		"syntax": "<count> <username> <message>",
+		"callback": rtxMurder
+	}, {
+		"trigger": "!changeusername",
+		"privileges": privileges.ADMIN_MANAGE_USERS,
+		"syntax": "<username> <newUsername>",
+		"callback": changeUsername
+	}, {
+	
+		"trigger": "!acc",
+		"callback": tillerinoAcc,
+		"syntax": "<accuarcy>"
 	}
 ]
 
