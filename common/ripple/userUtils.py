@@ -235,7 +235,7 @@ def calculateAccuracy(userID, gameMode):
 		divideTotal = 0
 		k = 0
 		for i in bestAccScores:
-			add = int((0.95 ** k) * 100)
+			add = int((0.97 ** k) * 100)
 			totalAcc += i["accuracy"] * add
 			divideTotal += add
 			k += 1
@@ -264,7 +264,7 @@ def calculatePP(userID, gameMode):
 	if bestPPScores is not None:
 		k = 0
 		for i in bestPPScores:
-			new = round(round(i["pp"]) * 0.95 ** k)
+			new = round(round(i["pp"]) * 0.97 ** k)
 			totalPP += new
 			k += 1
 
@@ -921,18 +921,7 @@ def resetPendingFlag(userID, success=True):
 	"""
 	glob.db.execute("UPDATE users SET privileges = privileges & %s WHERE id = %s LIMIT 1", [~privileges.USER_PENDING_VERIFICATION, userID])
 	if success:
-		key = glob.db.fetch("SELECT beta_key FROM users WHERE id = %s",[userID])["beta_key"]
-		vk = glob.redis.get("vk:"+key)
-		if vk is None:
-			glob.db.execute("UPDATE users SET privileges = privileges | %s WHERE id = %s LIMIT 1", [(privileges.USER_PUBLIC | privileges.USER_NORMAL), userID])
-		else:
-			vk = vk.decode("utf-8").split('|')
-			print(vk)
-			glob.db.execute("UPDATE users SET privileges = privileges | %s, vk = %s WHERE id = %s LIMIT 1", [(privileges.USER_PUBLIC | privileges.USER_NORMAL), vk[0],userID])
-			if(int(vk[1]) > 0):
-				donor = time.time()+((30*86400)*int(vk[1]))
-				print(donor)
-				glob.db.execute("UPDATE users SET privileges = privileges | %s, donor_expire = %s WHERE id = %s LIMIT 1",	[privileges.USER_DONOR, donor, userID])
+		glob.db.execute("UPDATE users SET privileges = privileges | %s WHERE id = %s LIMIT 1", [(privileges.USER_PUBLIC | privileges.USER_NORMAL), userID])
 
 def verifyUser(userID, hashes):
 	"""
